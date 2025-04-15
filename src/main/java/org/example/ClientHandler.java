@@ -26,8 +26,9 @@ public class ClientHandler implements Runnable {
         while (!socket.isClosed() && socket.isConnected()) {
             try {
                 handleClientRequest();
+                // handleClientRequest();
             } catch (IOException e) {
-                if (!e.getMessage().equals("Connection reset")){
+                if (!e.getMessage().equals("Connection reset")) {
                     System.out.println("Cannot handle request");
                     System.out.println(e.getMessage());
                     e.printStackTrace();
@@ -39,13 +40,16 @@ public class ClientHandler implements Runnable {
                     System.out.println(ex.getMessage());
                 }
                 clientHandlers.remove(this);
+                return;
             }
         }
     }
 
     private void handleClientRequest() throws IOException {
+        if (!reader.ready())
+            return;
         String requestLine = reader.readLine();
-        if (requestLine == null || requestLine.startsWith("CONNECT")){
+        if (requestLine == null || requestLine.startsWith("CONNECT")) {
             socket.close();
             return;
         }
@@ -59,6 +63,14 @@ public class ClientHandler implements Runnable {
                 break;
         }
         String host = getHost(requestStrings);
+        try (BlackListHandler blackListHandler = new BlackListHandler()) {
+            if (blackListHandler.isBlocked(host)) {
+                System.out.println("request: " + requestStrings.getFirst());
+                blackListHandler.writeForbiddenMessage(outputStream);
+                return;
+            }
+        }
+
         // String request = String.join("\r\n",(String[])requestStrings.toArray());
         //String line;
         // String host = getHost(request);
@@ -78,23 +90,54 @@ public class ClientHandler implements Runnable {
         // requestStrings.forEach(System.out::println);
         System.out.println("request: " + requestStrings.getFirst());
 
-        try (Socket serverSocket = new Socket(host, port)) {
+        try {
+            Socket serverSocket = new Socket(host, port);
+
             InputStream serverInputStream = serverSocket.getInputStream();
             OutputStream serverOutputStream = serverSocket.getOutputStream();
-            BufferedReader serverReader = new BufferedReader(new InputStreamReader(serverInputStream));
+//            BufferedReader serverReader = new BufferedReader(new InputStreamReader(serverInputStream));
+//            BufferedWriter serverWriter = new BufferedWriter(new OutputStreamWriter(serverOutputStream));
+
             serverOutputStream.write(formatRequest(requestStrings).getBytes(StandardCharsets.UTF_8));
 
             // serverOutputStream.write(formatRequest(request, host).getBytes(StandardCharsets.UTF_8));
             // serverOutputStream.write(data);
             serverOutputStream.flush();
-            byte[] data = serverInputStream.readAllBytes();
+
+/*
+            while(serverSocket.isConnected() && (line = serverReader.readLine()) != null){
+                if (b){
+                    System.out.println(line);
+                    b = false;
+                }
+                writer.write(line);
+                writer.newLine();
+            };
+            writer.newLine();
+            writer.flush();
+*/
+            // StringBuilder sb = new StringBuilder();
+            boolean b = true;
+            byte[] buffer = new byte[8192];
+            int bytesRead;
+            while ((bytesRead = serverInputStream.read(buffer)) != -1) {
+                outputStream.write(buffer, 0, bytesRead);
+                if (b){
+                    System.out.println(new String(buffer, StandardCharsets.UTF_8).split("\r\n")[0]);
+                    b = false;
+                }
+                // sb.append(new String(buffer, StandardCharsets.UTF_8));
+            }
+            outputStream.flush();
+
+            /*byte[] data = serverInputStream.readAllBytes();
             String response = new String(data, StandardCharsets.UTF_8);
 
             System.out.println("Response from " + host);
             System.out.println(response.split("\r\n")[0]);
 
             outputStream.write(data);
-            outputStream.flush();
+            outputStream.flush();*/
 
         } catch (Exception ex) {
             System.out.println("Something went wrong");
@@ -160,18 +203,24 @@ public class ClientHandler implements Runnable {
     }
 
 
-    private String formatRequest(ArrayList<String> requestStrings){
-       if (requestStrings.get(2).startsWith("Proxy-Connection")){
-            requestStrings.set(2, "Connection: close");
-        }
+    private String formatRequest(ArrayList<String> requestStrings) {
+       /*if (requestStrings.get(2).startsWith("Proxy-Connection")){
+            requestStrings.set(2, "Connection: keep-alive");
+        }*/
         String[] strs = requestStrings.get(0).split(" ");
         try {
             URL url = new URL(strs[1]);
             requestStrings.set(0, requestStrings.getFirst().replace(url.toString(), url.getFile()));
-        } catch (Exception e) { }
+        } catch (Exception e) {
+        }
 
         StringBuilder sb = new StringBuilder();
-        requestStrings.forEach(str -> sb.append(str).append("\r\n"));
+        requestStrings.forEach(str -> {
+            if (str.startsWith("Accept"))
+                sb.append("Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7\r\n");
+            else
+                sb.append(str).append("\r\n");
+        });
         String request = sb.toString();
         return request;
     }

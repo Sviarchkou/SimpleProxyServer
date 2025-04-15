@@ -10,7 +10,7 @@ public class SimpleProxyServer {
     private static final int HTTP_PORT = 80;
 
     public static void main(String[] args) throws IOException {
-        ServerSocket serverSocket = new ServerSocket(PORT);
+        ServerSocket serverSocket = new ServerSocket(PORT, 50, InetAddress.getByName("127.0.0.2"));
         System.out.println("Proxy server started on port " + PORT);
 
         while (true) {
